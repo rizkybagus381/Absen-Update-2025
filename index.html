@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="id" >
+<html lang="id">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -45,6 +45,15 @@
       font-weight: 700;
       border-color: #b91c1c;
       border-width: 2px;
+    }
+
+    /* New: Styling for 'late' attendance status */
+    .late-status {
+        background-color: #fef3c7; /* Light yellow background */
+        color: #a16207; /* Darker yellow/orange text */
+        font-weight: 600;
+        border-color: #d97706; /* Orange border */
+        border-width: 1px;
     }
 
     /* Table specific styling for better appearance */
@@ -269,6 +278,29 @@
   <section id="adminDashboard" class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-6 hidden">
     <h2 class="text-3xl font-extrabold text-center mb-8 select-none">Dashboard Admin - Aktivitas & Karyawan</h2>
 
+    <!-- Attendance Settings -->
+    <div class="bg-white rounded-2xl shadow p-4 sm:p-6 mb-8">
+        <h3 class="text-2xl font-bold mb-4 text-gray-800">Pengaturan Absensi</h3>
+        <form id="attendanceSettingsForm" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label for="lateCutoffTime" class="block text-sm font-medium text-gray-700 mb-1">Batas Jam Kehadiran (HH:MM)</label>
+                <input type="time" id="lateCutoffTime" name="lateCutoffTime" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg" value="07:00" required>
+                <p class="text-gray-500 text-sm mt-1">Absensi setelah waktu ini akan dianggap terlambat.</p>
+            </div>
+            <div>
+                <label for="latePenaltyAmount" class="block text-sm font-medium text-gray-700 mb-1">Anggaran Denda per Menit (Rp)</label>
+                <input type="number" id="latePenaltyAmount" name="latePenaltyAmount" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg" min="0" value="1000" required>
+                <p class="text-gray-500 text-sm mt-1">Denda yang dikenakan untuk setiap menit keterlambatan.</p>
+            </div>
+            <div class="md:col-span-2 flex justify-end">
+                <button type="submit" id="saveSettingsBtn" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 transition focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2">
+                    Simpan Pengaturan
+                </button>
+            </div>
+            <p id="settingsSaveMsg" class="md:col-span-2 text-sm text-center font-medium mt-2 hidden"></p>
+        </form>
+    </div>
+
     <!-- Registered Employees List -->
     <div class="bg-white rounded-2xl shadow p-4 sm:p-6 mb-8">
         <h3 class="text-2xl font-bold mb-4 text-gray-800">Daftar Karyawan Terdaftar</h3>
@@ -405,7 +437,7 @@
   // Firebase SDK Imports
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, collection, addDoc, onSnapshot, query, getDocs, deleteDoc, writeBatch, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, onSnapshot, query, getDocs, deleteDoc, writeBatch, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   // Global Variables
   let db;
@@ -420,6 +452,12 @@
   // Variables for QR Scanner
   let videoStream = null;
   let animationFrameId = null;
+
+  // NEW: Global variables for attendance settings, with default values
+  let lateCutoffHour = 7;
+  let lateCutoffMinute = 0;
+  let latePenaltyPerMinute = 1000; // Rp. 1,000 per minute late
+
 
   (() => {
     // Admin hardcoded credentials
@@ -499,6 +537,13 @@
     const qrImageInput = document.getElementById('qrImageInput'); // New: Hidden file input
     const startCameraScanBtn = document.getElementById('startCameraScanBtn'); // New: Start camera scan button
 
+    // NEW: Attendance Settings Elements
+    const attendanceSettingsForm = document.getElementById('attendanceSettingsForm');
+    const lateCutoffTimeInput = document.getElementById('lateCutoffTime');
+    const latePenaltyAmountInput = document.getElementById('latePenaltyAmount');
+    const settingsSaveMsg = document.getElementById('settingsSaveMsg');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+
 
     // --- Firebase Initialization and Authentication ---
     firebaseLoadingOverlay.classList.remove('hidden');
@@ -525,6 +570,7 @@
       if (user) {
         isFirebaseReady = true;
         firebaseLoadingOverlay.classList.add('hidden');
+        await loadAttendanceSettings(); // Load settings immediately after Firebase is ready
         updateUIForAdmin(); // Update UI based on admin status
         setupFirestoreListener(); // Setup listeners for both attendance and employees
       } else {
@@ -591,6 +637,93 @@
           noEmployeesMsg.classList.remove('hidden');
         }
       });
+
+      // Listener for Attendance Settings
+      const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'attendanceSettings');
+      onSnapshot(settingsDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          lateCutoffHour = data.lateCutoffHour !== undefined ? data.lateCutoffHour : 7;
+          lateCutoffMinute = data.lateCutoffMinute !== undefined ? data.lateCutoffMinute : 0;
+          latePenaltyPerMinute = data.latePenaltyPerMinute !== undefined ? data.latePenaltyPerMinute : 1000;
+          
+          // Update admin settings form inputs if admin is logged in
+          if (isAdminLoggedIn) {
+            lateCutoffTimeInput.value = `${String(lateCutoffHour).padStart(2, '0')}:${String(lateCutoffMinute).padStart(2, '0')}`;
+            latePenaltyAmountInput.value = latePenaltyPerMinute;
+          }
+        } else {
+          // If settings document doesn't exist, create it with default values
+          // This will be handled by the saveSettings function if user explicitly saves.
+          // For now, ensure global variables hold default values.
+          lateCutoffHour = 7;
+          lateCutoffMinute = 0;
+          latePenaltyPerMinute = 1000;
+          if (isAdminLoggedIn) {
+            lateCutoffTimeInput.value = '07:00';
+            latePenaltyAmountInput.value = 1000;
+          }
+        }
+      }, (error) => {
+        console.error("Error fetching attendance settings from Firestore:", error);
+        if (isAdminLoggedIn) {
+            settingsSaveMsg.textContent = `Gagal memuat pengaturan: ${error.message}`;
+            settingsSaveMsg.classList.add('text-red-600');
+            settingsSaveMsg.classList.remove('hidden');
+        }
+      });
+    }
+
+    async function loadAttendanceSettings() {
+        if (!isFirebaseReady) return;
+        const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'attendanceSettings');
+        try {
+            const docSnap = await getDoc(settingsDocRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                lateCutoffHour = data.lateCutoffHour !== undefined ? data.lateCutoffHour : 7;
+                lateCutoffMinute = data.lateCutoffMinute !== undefined ? data.lateCutoffMinute : 0;
+                latePenaltyPerMinute = data.latePenaltyPerMinute !== undefined ? data.latePenaltyPerMinute : 1000;
+            } else {
+                // If no settings exist, initialize with defaults
+                await saveAttendanceSettings(7, 0, 1000);
+            }
+        } catch (e) {
+            console.error("Error loading attendance settings:", e);
+            // Fallback to default values if loading fails
+            lateCutoffHour = 7;
+            lateCutoffMinute = 0;
+            latePenaltyPerMinute = 1000;
+        }
+    }
+
+    async function saveAttendanceSettings(hour, minute, penalty) {
+        if (!isFirebaseReady) {
+            settingsSaveMsg.textContent = 'Server tidak siap. Coba lagi.';
+            settingsSaveMsg.classList.add('text-red-600');
+            settingsSaveMsg.classList.remove('hidden');
+            return false;
+        }
+        const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'attendanceSettings');
+        try {
+            await setDoc(settingsDocRef, {
+                lateCutoffHour: hour,
+                lateCutoffMinute: minute,
+                latePenaltyPerMinute: penalty
+            });
+            console.log("Attendance settings saved successfully!");
+            settingsSaveMsg.textContent = 'Pengaturan berhasil disimpan!';
+            settingsSaveMsg.classList.remove('text-red-600', 'hidden');
+            settingsSaveMsg.classList.add('text-green-600');
+            setTimeout(() => settingsSaveMsg.classList.add('hidden'), 3000);
+            return true;
+        } catch (e) {
+            console.error("Error saving attendance settings: ", e);
+            settingsSaveMsg.textContent = `Gagal menyimpan pengaturan: ${e.message}`;
+            settingsSaveMsg.classList.remove('hidden', 'text-green-600');
+            settingsSaveMsg.classList.add('text-red-600');
+            return false;
+        }
     }
 
     async function saveAttendanceRecord(record) {
@@ -696,7 +829,7 @@
             <span class="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full">${attendanceCount} Kehadiran</span>
           </h4>
           <div class="overflow-x-auto max-h-[300px] scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400">
-            <table class="w-full text-left border-collapse min-w-[600px]">
+            <table class="w-full text-left border-collapse min-w-[700px]"> <!-- Increased min-width for new columns -->
               <thead>
                 <tr class="border-b border-gray-300 text-gray-700 select-none bg-gray-100">
                   <th class="py-3 px-4">Tanggal &amp; Waktu</th>
@@ -704,6 +837,9 @@
                   <th class="py-3 px-4">Longitude</th>
                   <th class="py-3 px-4">Alamat</th>
                   <th class="py-3 px-4">Keterangan</th>
+                  <th class="py-3 px-4">Status Waktu</th>
+                  <th class="py-3 px-4">Keterangan Denda</th> <!-- New column -->
+                  <th class="py-3 px-4">Jumlah Denda</th> <!-- New column -->
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200" id="attendanceTableBody-${escapeHtml(employeeId)}">
@@ -723,6 +859,20 @@
 
         // Populate the table body with attendance records for this employee
         for (const r of records) {
+          // Determine status text and class
+          let statusText = r.keterangan;
+          let statusClass = r.keterangan === 'Di luar lokasi' ? 'text-red-700 urgent-alert' : 'text-green-700';
+
+          // Handle late status for UI
+          let lateStatusText = r.isLate ? `Telat ${r.lateMinutes} menit` : 'Tepat Waktu';
+          let lateStatusClass = r.isLate ? 'text-red-600 font-semibold' : 'text-green-600';
+          let lateIconSvg = r.isLate ? `<svg class="inline-block w-4 h-4 mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>` : '';
+
+          // Penalty related display
+          let penaltyKeterangan = r.isLate ? `Terlambat ${r.lateMinutes} menit` : '-';
+          let penaltyAmount = r.isLate && r.penaltyAmount ? `Rp. ${r.penaltyAmount.toLocaleString('id-ID')}` : '-';
+          let penaltyClass = r.isLate ? 'text-red-600 font-bold' : 'text-gray-500';
+
           const tr = document.createElement('tr');
           tr.classList.add('hover:bg-gray-50', 'transition');
           tr.innerHTML = `
@@ -730,8 +880,17 @@
             <td class="py-3 px-4 text-sm font-mono">${escapeHtml(r.latitude)}</td>
             <td class="py-3 px-4 text-sm font-mono">${escapeHtml(r.longitude)}</td>
             <td class="py-3 px-4 text-sm">${escapeHtml(r.address)}</td>
-            <td class="py-3 px-4 text-sm font-semibold ${r.keterangan === 'Di luar lokasi' ? 'text-red-700 urgent-alert' : 'text-green-700'} select-none">
-              ${escapeHtml(r.keterangan)}
+            <td class="py-3 px-4 text-sm font-semibold ${statusClass} select-none">
+              ${escapeHtml(statusText)}
+            </td>
+            <td class="py-3 px-4 text-sm ${lateStatusClass} select-none">
+              ${lateIconSvg} ${escapeHtml(lateStatusText)}
+            </td>
+            <td class="py-3 px-4 text-sm ${penaltyClass} select-none">
+              ${escapeHtml(penaltyKeterangan)}
+            </td>
+            <td class="py-3 px-4 text-sm ${penaltyClass} select-none">
+              ${escapeHtml(penaltyAmount)}
             </td>
           `;
           currentEmployeeTableBody.appendChild(tr);
@@ -841,6 +1000,11 @@
         return new Intl.DateTimeFormat('id-ID', options).format(date);
     }
 
+    // Helper function to format currency
+    function formatCurrency(amount) {
+        return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
+    }
+
     function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
       const R = 6371000; // Radius of the earth in meters
       const dLat = deg2rad(lat2 - lat1);
@@ -913,39 +1077,76 @@
 
             const keterangan = inLocation ? 'Di lokasi' : 'Di luar lokasi';
 
+            // Lateness calculation using global settings
+            let isLate = false;
+            let lateMinutes = 0; // In minutes
+            let penaltyAmount = 0; // In Rupiah
+
+            // Create a cutoff date for today at LATE_CUTOFF_HOUR:LATE_CUTOFF_MINUTE
+            const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), lateCutoffHour, lateCutoffMinute, 0, 0);
+
+            if (now.getTime() > cutoffDate.getTime()) {
+                isLate = true;
+                const diffMs = now.getTime() - cutoffDate.getTime();
+                lateMinutes = Math.ceil(diffMs / (1000 * 60)); // Round up to nearest minute
+                penaltyAmount = lateMinutes * latePenaltyPerMinute;
+            }
+
             let locationCardContent = '';
+            let statusBadgeClass = '';
+            let statusTextClass = '';
+            let statusIcon = '';
+
             if (inLocation) {
-              locationCardContent = `
-                <div class="bg-green-50 border border-green-200 rounded-xl p-5 mt-4 flex flex-col items-center select-text">
-                  <svg class="w-8 h-8 text-green-500 mb-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M5 13l4 4L19 7" />
-                  </svg>
-                  <div class="text-green-700 font-semibold mb-1">Absensi berhasil dicatat!</div>
+                statusBadgeClass = 'bg-green-50 border-green-200';
+                statusTextClass = 'text-green-700';
+                statusIcon = `
+                    <svg class="w-8 h-8 text-green-500 mb-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M5 13l4 4L19 7" />
+                    </svg>
+                `;
+            } else {
+                statusBadgeClass = 'urgent-alert'; // Uses animation
+                statusTextClass = 'text-red-700';
+                statusIcon = `
+                    <svg class="w-10 h-10 mb-3" fill="none" stroke="#b91c1c" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M12 9v2m0 4h.01M10.29 6.16a8 8 0 1113.42 10.69m-5.67-10.57L3 21" />
+                    </svg>
+                `;
+            }
+
+            let lateBadge = '';
+            let penaltyInfo = '';
+
+            if (isLate) {
+                lateBadge = `
+                    <div class="mt-3 text-red-600 font-bold flex items-center justify-center">
+                        <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        TERLAMBAT: ${lateMinutes} menit
+                    </div>
+                `;
+                penaltyInfo = `
+                    <div class="text-red-700 font-bold mt-2">
+                        Denda Keterlambatan: ${formatCurrency(penaltyAmount)}
+                    </div>
+                `;
+            }
+
+
+            locationCardContent = `
+                <div class="${statusBadgeClass} border rounded-xl p-5 mt-4 flex flex-col items-center select-text">
+                  ${statusIcon}
+                  <div class="${statusTextClass} font-semibold mb-1">${inLocation ? 'Absensi berhasil dicatat!' : 'PERINGATAN DARURAT: Karyawan tidak di lokasi kantor!'}</div>
                   <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
                   <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
                   <div class="text-gray-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
                   <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
                   <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
-                  <div class="text-green-700 font-semibold mt-3 select-none">${keterangan}</div>
+                  <div class="${statusTextClass} font-bold mt-3 select-none">${keterangan}</div>
+                  ${lateBadge} <!-- Add late badge if applicable -->
+                  ${penaltyInfo} <!-- Add penalty info if applicable -->
                 </div>
-              `;
-            } else {
-              locationCardContent = `
-                <div class="urgent-alert border rounded-xl p-5 mt-4 flex flex-col items-center select-text">
-                  <svg class="w-10 h-10 mb-3" fill="none" stroke="#b91c1c" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M12 9v2m0 4h.01M10.29 6.16a8 8 0 1113.42 10.69m-5.67-10.57L3 21" />
-                  </svg>
-                  <div class="text-red-700 text-xl font-extrabold mb-1">PERINGATAN DARURAT</div>
-                  <div class="text-red-700 font-semibold mb-1">Karyawan tidak di lokasi kantor!</div>
-                  <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
-                  <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
-                  <div class="text-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
-                  <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
-                  <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
-                  <div class="text-red-700 font-bold mt-3 select-none">${keterangan}</div>
-                </div>
-              `;
-            }
+            `;
             locationCard.innerHTML = locationCardContent;
 
             const record = {
@@ -956,6 +1157,9 @@
               longitude: longitude.toFixed(6),
               address: address,
               keterangan: keterangan,
+              isLate: isLate, // Add isLate status
+              lateMinutes: lateMinutes, // Add minutes late
+              penaltyAmount: penaltyAmount // Add penalty amount
             };
             saveAttendanceRecord(record);
 
@@ -1054,6 +1258,11 @@
 
     function updateUIForAdmin() {
       if (isAdminLoggedIn) {
+        // Populate settings inputs
+        lateCutoffTimeInput.value = `${String(lateCutoffHour).padStart(2, '0')}:${String(lateCutoffMinute).padStart(2, '0')}`;
+        latePenaltyAmountInput.value = latePenaltyPerMinute;
+        settingsSaveMsg.classList.add('hidden'); // Hide any previous save message
+
         // Hide regular user sections
         heroSection.classList.add('hidden');
         fiturSection.classList.add('hidden');
@@ -1465,6 +1674,39 @@
         }
       }
     }
+
+    // NEW: Event listener for saving attendance settings
+    attendanceSettingsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const timeValue = lateCutoffTimeInput.value; // e.g., "07:30"
+        const [hour, minute] = timeValue.split(':').map(Number);
+        const penalty = parseInt(latePenaltyAmountInput.value, 10);
+
+        if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            settingsSaveMsg.textContent = 'Format waktu tidak valid. Gunakan HH:MM.';
+            settingsSaveMsg.classList.remove('hidden', 'text-green-600');
+            settingsSaveMsg.classList.add('text-red-600');
+            return;
+        }
+        if (isNaN(penalty) || penalty < 0) {
+            settingsSaveMsg.textContent = 'Jumlah denda tidak valid. Masukkan angka positif.';
+            settingsSaveMsg.classList.remove('hidden', 'text-green-600');
+            settingsSaveMsg.classList.add('text-red-600');
+            return;
+        }
+
+        saveSettingsBtn.disabled = true;
+        settingsSaveMsg.textContent = 'Menyimpan pengaturan...';
+        settingsSaveMsg.classList.remove('hidden', 'text-red-600', 'text-green-600');
+        
+        const success = await saveAttendanceSettings(hour, minute, penalty);
+        if (success) {
+            lateCutoffHour = hour;
+            lateCutoffMinute = minute;
+            latePenaltyPerMinute = penalty;
+        }
+        saveSettingsBtn.disabled = false;
+    });
 
 
     window.addEventListener('keydown', e => {
