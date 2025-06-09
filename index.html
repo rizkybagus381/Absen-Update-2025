@@ -6,6 +6,10 @@
   <title>Deteksi Lokasi Absen - Admin</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&amp;display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- QR Code Library for generation (already existing) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- JSQR Library for QR scanning -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     body { font-family: 'Inter', sans-serif; }
     /* Scrollbar styling for attendance list */
@@ -44,17 +48,21 @@
     }
 
     /* Table specific styling for better appearance */
-    #attendanceList table {
+    #attendanceList table,
+    #registeredEmployeesList table {
       min-width: 768px; /* Ensure table has a minimum width to enable horizontal scroll on small screens */
     }
 
     #attendanceList th,
-    #attendanceList td {
+    #attendanceList td,
+    #registeredEmployeesList th,
+    #registeredEmployeesList td {
       padding: 12px 16px; /* Increased padding for better spacing */
       border-bottom: 1px solid #e5e7eb; /* Subtle bottom border for rows */
     }
 
-    #attendanceList thead th {
+    #attendanceList thead th,
+    #registeredEmployeesList thead th {
       background-color: #f9fafb; /* Light background for header */
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -66,17 +74,20 @@
     }
 
     /* Last child of header row should have no bottom border to avoid double border */
-    #attendanceList thead tr:last-child th {
+    #attendanceList thead tr:last-child th,
+    #registeredEmployeesList thead tr:last-child th {
       border-bottom: none;
     }
 
     /* Remove bottom border for the last row of tbody */
-    #attendanceTableBody tr:last-child td {
+    #attendanceTableBody tr:last-child td,
+    #employeesTableBody tr:last-child td {
       border-bottom: none;
     }
 
     /* Add striped rows for better readability */
-    #attendanceTableBody tr:nth-child(even) {
+    #attendanceTableBody tr:nth-child(even),
+    #employeesTableBody tr:nth-child(even) {
         background-color: #f9fafb; /* Lighter background for even rows */
     }
 
@@ -114,6 +125,18 @@
     /* Initially hide the loading overlay */
     #firebaseLoadingOverlay {
       display: none;
+    }
+
+    /* QR Scanner video/canvas styling */
+    #qrVideo {
+      width: 100%;
+      height: auto; /* Maintain aspect ratio */
+      max-height: 300px; /* Max height to prevent excessive size */
+      display: block; /* Remove extra space below video */
+      margin: 0 auto;
+    }
+    #qrCanvas {
+      display: none; /* Canvas remains hidden */
     }
   </style>
 </head>
@@ -191,12 +214,16 @@
   <section id="absen" class="max-w-2xl mx-auto px-6 py-12">
     <div class="bg-white rounded-2xl shadow-lg p-8 flex flex-col items-center" id="absenSection">
       <h2 class="text-2xl font-bold mb-4 select-none">Formulir Absen Lokasi</h2>
-      <p class="text-gray-500 mb-6 text-center select-none">Klik tombol di bawah untuk mendeteksi lokasi Anda secara otomatis.</p>
+      <p class="text-gray-500 mb-6 text-center select-none">Pilih metode absensi Anda:</p>
       <!-- Employee Identifier Input -->
       <label for="employeeName" class="self-start mb-2 font-medium text-gray-700 select-none">Nama Karyawan</label>
-      <input type="text" id="employeeName" placeholder="Masukkan nama Anda" class="mb-6 w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent" autocomplete="off" />
+      <input type="text" id="employeeName" placeholder="Masukkan nama Anda" class="mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent" autocomplete="off" />
       <button id="detectBtn" class="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:bg-blue-300 mb-4" disabled>
-        Deteksi Lokasi Sekarang
+        Deteksi Lokasi Sekarang (Dengan Nama)
+      </button>
+      <!-- New Scan QR Button -->
+      <button id="scanQrBtn" class="w-full px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 mb-4">
+        Scan QR untuk Absen
       </button>
       <div id="locationCard" class="w-full"></div>
     </div>
@@ -226,24 +253,53 @@
 
   <!-- Admin Dashboard Section -->
   <section id="adminDashboard" class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-6 hidden">
-    <h2 class="text-3xl font-extrabold text-center mb-8 select-none">Dashboard Admin - Aktivitas Karyawan</h2>
+    <h2 class="text-3xl font-extrabold text-center mb-8 select-none">Dashboard Admin - Aktivitas & Karyawan</h2>
+
+    <!-- Registered Employees List -->
+    <div class="bg-white rounded-2xl shadow p-4 sm:p-6 mb-8">
+        <h3 class="text-2xl font-bold mb-4 text-gray-800">Daftar Karyawan Terdaftar</h3>
+        <div id="registeredEmployeesList" class="overflow-x-auto max-h-[300px] scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-gray-300 text-gray-700 select-none">
+                        <th class="py-3 px-4">Nama Karyawan</th>
+                        <th class="py-3 px-4">ID Karyawan</th>
+                        <th class="py-3 px-4">Aksi</th>
+                        <th class="py-3 px-4">Kode QR</th>
+                    </tr>
+                </thead>
+                <tbody id="employeesTableBody" class="divide-y divide-gray-200">
+                    <!-- Employee rows inserted here dynamically -->
+                </tbody>
+            </table>
+            <p id="noEmployeesMsg" class="text-center text-gray-500 mt-6 select-none hidden">Belum ada karyawan terdaftar.</p>
+        </div>
+        <div class="flex justify-center mt-6">
+            <button id="addEmployeeBtn" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2">
+                Tambah Karyawan Baru
+            </button>
+        </div>
+    </div>
+
+    <!-- Employee Attendance List (Existing) -->
     <div id="attendanceList" class="overflow-x-auto bg-white rounded-2xl shadow p-4 sm:p-6 max-h-[480px] scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400">
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="border-b border-gray-300 text-gray-700 select-none">
-            <th class="py-3 px-4">Nama Karyawan</th>
-            <th class="py-3 px-4">Tanggal &amp; Waktu</th>
-            <th class="py-3 px-4">Latitude</th>
-            <th class="py-3 px-4">Longitude</th>
-            <th class="py-3 px-4">Alamat</th>
-            <th class="py-3 px-4">Keterangan</th>
-          </tr>
-        </thead>
-        <tbody id="attendanceTableBody" class="divide-y divide-gray-200">
-          <!-- Attendance rows inserted here dynamically -->
-        </tbody>
-      </table>
-      <p id="noAttendanceMsg" class="text-center text-gray-500 mt-6 select-none hidden">Belum ada data aktivitas karyawan.</p>
+        <h3 class="text-2xl font-bold mb-4 text-gray-800">Riwayat Absensi Karyawan</h3>
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="border-b border-gray-300 text-gray-700 select-none">
+                    <th class="py-3 px-4">Nama Karyawan</th>
+                    <th class="py-3 px-4">Tanggal &amp; Waktu</th>
+                    <th class="py-3 px-4">Latitude</th>
+                    <th class="py-3 px-4">Longitude</th>
+                    <th class="py-3 px-4">Alamat</th>
+                    <th class="py-3 px-4">Keterangan</th>
+                </tr>
+            </thead>
+            <tbody id="attendanceTableBody" class="divide-y divide-gray-200">
+                <!-- Attendance rows inserted here dynamically -->
+            </tbody>
+        </table>
+        <p id="noAttendanceMsg" class="text-center text-gray-500 mt-6 select-none hidden">Belum ada data aktivitas karyawan.</p>
     </div>
     <div class="flex justify-center mt-6">
       <button id="resetHistoryBtn" class="px-6 py-3 bg-red-600 text-white font-semibold rounded-lg shadow hover:bg-red-700 transition focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2">
@@ -251,6 +307,28 @@
       </button>
     </div>
   </section>
+
+  <!-- Add Employee Modal -->
+  <div id="addEmployeeModal" role="dialog" aria-modal="true" aria-labelledby="addEmployeeModalTitle" tabindex="-1" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-30 transition-opacity duration-300">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 transform transition-transform duration-300 scale-95 opacity-0" id="addEmployeeModalContent">
+          <h3 id="addEmployeeModalTitle" class="text-3xl font-extrabold text-center text-gray-800 mb-8 select-none">Tambah Karyawan Baru</h3>
+          <form id="addEmployeeForm" class="flex flex-col space-y-6" autocomplete="off">
+              <div class="relative">
+                  <label for="newEmployeeName" class="absolute -top-3 left-3 text-sm font-medium text-gray-600 bg-white px-1">Nama Karyawan</label>
+                  <input id="newEmployeeName" name="newEmployeeName" type="text" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg" placeholder="Masukkan nama karyawan" />
+              </div>
+              <div class="relative">
+                  <label for="newEmployeeIdDisplay" class="absolute -top-3 left-3 text-sm font-medium text-gray-600 bg-white px-1">ID Karyawan (Otomatis)</label>
+                  <input id="newEmployeeIdDisplay" type="text" readonly class="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed text-lg font-mono" />
+              </div>
+              <p id="addEmployeeErrorMsg" class="text-red-600 text-sm mt-4 hidden select-none text-center font-medium" role="alert"></p>
+              <div class="flex justify-end space-x-4 mt-6">
+                  <button type="button" id="cancelAddEmployeeBtn" class="px-6 py-2 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-400">Batal</button>
+                  <button type="submit" id="addEmployeeConfirmBtn" class="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition focus:outline-none focus:ring-2 focus:ring-blue-400">Tambahkan</button>
+              </div>
+          </form>
+      </div>
+  </div>
 
   <!-- Reset Confirmation Modal -->
   <div id="resetConfirmModal" role="dialog" aria-modal="true" aria-labelledby="resetModalTitle" tabindex="-1" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 hidden z-30">
@@ -266,6 +344,55 @@
     </div>
   </div>
 
+  <!-- Employee Delete Confirmation Modal -->
+  <div id="deleteEmployeeConfirmModal" role="dialog" aria-modal="true" aria-labelledby="deleteEmployeeModalTitle" tabindex="-1" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 hidden z-30">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-8">
+      <h3 id="deleteEmployeeModalTitle" class="text-2xl font-bold mb-6 text-center select-none">Hapus Karyawan</h3>
+      <p class="text-gray-600 text-center mb-4 select-none">Anda yakin ingin menghapus karyawan <span id="employeeToDeleteName" class="font-bold"></span>?</p>
+      <p class="text-red-600 text-sm mt-2 hidden text-center select-none" id="deleteEmployeeErrorMsg" role="alert"></p>
+      <div class="flex justify-end space-x-4 mt-6">
+        <button type="button" id="cancelDeleteEmployeeBtn" class="px-6 py-2 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-gray-400">Batal</button>
+        <button type="button" id="confirmDeleteEmployeeBtn" class="px-6 py-2 bg-red-600 text-white font-semibold rounded-lg shadow hover:bg-red-700 transition focus:outline-none focus:ring-2 focus:ring-red-400">Hapus</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Code Display Modal (for Admin to show QR) -->
+  <div id="qrCodeModal" role="dialog" aria-modal="true" aria-labelledby="qrCodeModalTitle" tabindex="-1" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-30 transition-opacity duration-300">
+    <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8 transform transition-transform duration-300 scale-95 opacity-0" id="qrCodeModalContent">
+      <h3 id="qrCodeModalTitle" class="text-3xl font-extrabold text-center text-gray-800 mb-8 select-none">Kode QR Karyawan</h3>
+      <div id="qrcode" class="flex justify-center mb-8"></div>
+      <div class="text-center text-gray-600 mb-6 select-none">
+        <p class="font-bold mb-2">ID Karyawan:</p>
+        <p id="qrEmployeeId" class="font-mono text-lg break-all"></p>
+      </div>
+      <button type="button" id="closeQrModalBtn" class="mt-4 w-full py-3 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400">Tutup</button>
+    </div>
+  </div>
+
+  <!-- New QR Scanner Modal (for Employee attendance) -->
+  <div id="qrScannerModal" role="dialog" aria-modal="true" aria-labelledby="qrScannerModalTitle" tabindex="-1" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 hidden z-40 transition-opacity duration-300">
+    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 transform transition-transform duration-300 scale-95 opacity-0" id="qrScannerModalContent">
+      <h3 id="qrScannerModalTitle" class="text-2xl font-bold text-center text-gray-800 mb-6">Scan Kode QR Karyawan</h3>
+      <div class="flex flex-col items-center justify-center relative">
+        <video id="qrVideo" class="w-full rounded-lg border border-gray-300 bg-gray-100 object-cover" autoplay playsinline style="max-width: 100%; height: 240px;"></video>
+        <canvas id="qrCanvas" class="hidden"></canvas>
+        <div id="qrScanMessage" class="mt-4 text-center text-gray-700 font-medium">Arahkan kamera ke Kode QR.</div>
+        <div id="qrScanError" class="mt-2 text-center text-red-600 text-sm hidden"></div>
+      </div>
+      <div class="flex flex-col sm:flex-row gap-3 mt-6 justify-center">
+        <button type="button" id="selectImageBtn" class="flex-1 px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 transition focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2">
+          Pilih dari Galeri
+        </button>
+        <input type="file" id="qrImageInput" accept="image/*" class="hidden">
+        <button type="button" id="startCameraScanBtn" class="flex-1 px-6 py-3 bg-purple-600 text-white font-semibold rounded-lg shadow hover:bg-purple-700 transition focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2">
+          Gunakan Kamera
+        </button>
+      </div>
+      <button type="button" id="closeQrScannerModalBtn" class="mt-6 w-full py-3 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400">Tutup Scanner</button>
+    </div>
+  </div>
+
 
   <!-- Footer -->
   <footer class="text-center text-gray-400 text-sm py-6 mt-auto select-none">
@@ -276,7 +403,7 @@
   // Firebase SDK Imports
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, collection, addDoc, onSnapshot, query, getDocs, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, onSnapshot, query, getDocs, deleteDoc, writeBatch, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   // Global Variables
   let db;
@@ -284,15 +411,21 @@
   let appId;
   let isFirebaseReady = false;
   let currentAttendanceRecordsWithIds = [];
-  let isAdminLoggedIn = false; // Declared here as global
+  let currentRegisteredEmployees = []; // New: To store registered employees
+  let isAdminLoggedIn = false;
+  let employeeIdToDelete = null; // New: To store ID of employee to be deleted
+
+  // Variables for QR Scanner
+  let videoStream = null;
+  let animationFrameId = null;
 
   (() => {
     // Admin hardcoded credentials
-    const ADMIN_USERNAME = "admin";    // Changed back to 'admin'
-    const ADMIN_PASSWORD = "password123"; // Changed back to 'password123'
-    const RESET_PIN = "123";           // PIN for resetting history
+    const ADMIN_USERNAME = "admin";
+    const ADMIN_PASSWORD = "password123";
+    const RESET_PIN = "123";
 
-    // Office coordinates
+    // Office coordinates (Medan, North Sumatra, Indonesia)
     const OFFICE_LAT = 3.5890625;
     const OFFICE_LON = 98.6679375;
     const ACCEPT_RADIUS_METERS = 200; // 200 meter radius
@@ -312,7 +445,7 @@
     const attendanceTableBody = document.getElementById('attendanceTableBody');
     const noAttendanceMsg = document.getElementById('noAttendanceMsg');
 
-    const employeeNameInput = document.getElementById('employeeName');
+    const employeeNameInput = document.getElementById('employeeName'); // Manual employee name input
     const detectBtn = document.getElementById('detectBtn');
     const locationCard = document.getElementById('locationCard');
 
@@ -324,18 +457,60 @@
     const cancelResetBtn = document.getElementById('cancelResetBtn');
     const firebaseLoadingOverlay = document.getElementById('firebaseLoadingOverlay');
 
+    // New Employee Management Elements
+    const addEmployeeBtn = document.getElementById('addEmployeeBtn');
+    const addEmployeeModal = document.getElementById('addEmployeeModal');
+    const addEmployeeModalContent = document.getElementById('addEmployeeModalContent');
+    const addEmployeeForm = document.getElementById('addEmployeeForm');
+    const newEmployeeName = document.getElementById('newEmployeeName');
+    const newEmployeeIdDisplay = document.getElementById('newEmployeeIdDisplay');
+    const addEmployeeErrorMsg = document.getElementById('addEmployeeErrorMsg');
+    const cancelAddEmployeeBtn = document.getElementById('cancelAddEmployeeBtn');
+    const addEmployeeConfirmBtn = document.getElementById('addEmployeeConfirmBtn');
+    const employeesTableBody = document.getElementById('employeesTableBody');
+    const noEmployeesMsg = document.getElementById('noEmployeesMsg');
+
+    const deleteEmployeeConfirmModal = document.getElementById('deleteEmployeeConfirmModal');
+    const employeeToDeleteName = document.getElementById('employeeToDeleteName');
+    const deleteEmployeeErrorMsg = document.getElementById('deleteEmployeeErrorMsg');
+    const cancelDeleteEmployeeBtn = document.getElementById('cancelDeleteEmployeeBtn');
+    const confirmDeleteEmployeeBtn = document.getElementById('confirmDeleteEmployeeBtn');
+
+    // QR Code Display Modal Elements (for Admin to show QR)
+    const qrCodeModal = document.getElementById('qrCodeModal');
+    const qrCodeModalContent = document.getElementById('qrCodeModalContent');
+    const qrcodeDiv = document.getElementById('qrcode');
+    const qrEmployeeIdDisplay = document.getElementById('qrEmployeeId');
+    const closeQrModalBtn = document.getElementById('closeQrModalBtn');
+
+    // New QR Scanner Modal Elements (for Employee attendance)
+    const scanQrBtn = document.getElementById('scanQrBtn');
+    const qrScannerModal = document.getElementById('qrScannerModal');
+    const qrScannerModalContent = document.getElementById('qrScannerModalContent');
+    const qrVideo = document.getElementById('qrVideo');
+    const qrCanvas = document.getElementById('qrCanvas');
+    const qrScanMessage = document.getElementById('qrScanMessage');
+    const qrScanError = document.getElementById('qrScanError');
+    const closeQrScannerModalBtn = document.getElementById('closeQrScannerModalBtn');
+    const selectImageBtn = document.getElementById('selectImageBtn'); // New: Select from Gallery button
+    const qrImageInput = document.getElementById('qrImageInput'); // New: Hidden file input
+    const startCameraScanBtn = document.getElementById('startCameraScanBtn'); // New: Start camera scan button
+
+
     // --- Firebase Initialization and Authentication ---
     firebaseLoadingOverlay.classList.remove('hidden');
 
+    // Your web app's Firebase configuration
     const firebaseConfig = {
-      apiKey: "AIzaSyA-2RDM1GU7IkwZ7FS7vNX-6Y4TxccKf0s",
-      authDomain: "absensi-e120f.firebaseapp.com",
-      projectId: "absensi-e120f",
-      storageBucket: "absensi-e120f.firebasestorage.app",
-      messagingSenderId: "691383791243",
-      appId: "1:691383791243:web:456b6a7212c91165b4ae8e",
-      measurementId: "G-Y4G72FMJJX"
+      apiKey: "AIzaSyDVdSSeAlhK1sgjyeSLSdNW3zesatzPKDE",
+      authDomain: "data-absen-2025.firebaseapp.com",
+      projectId: "data-absen-2025",
+      storageBucket: "data-absen-2025.firebasestorage.app",
+      messagingSenderId: "771101147789",
+      appId: "1:771101147789:web:955049d4939500cfe4d8c4",
+      measurementId: "G-H0S4BS3M50"
     };
+
 
     appId = firebaseConfig.projectId;
 
@@ -347,11 +522,17 @@
       if (user) {
         isFirebaseReady = true;
         firebaseLoadingOverlay.classList.add('hidden');
-        updateUIForAdmin();
-        setupFirestoreListener();
+        updateUIForAdmin(); // Update UI based on admin status
+        setupFirestoreListener(); // Setup listeners for both attendance and employees
       } else {
         try {
           await signInAnonymously(auth);
+          // Only show loading for a short period if anonymous sign-in is quick
+          setTimeout(() => {
+            if (!isFirebaseReady) { // If still not ready after a small delay
+              firebaseLoadingOverlay.classList.add('hidden');
+            }
+          }, 1500); // Give it 1.5 seconds to sign in anonymously
         } catch (error) {
           console.error("Firebase Auth Error:", error);
           firebaseLoadingOverlay.classList.add('hidden');
@@ -368,23 +549,44 @@
     function setupFirestoreListener() {
       if (!isFirebaseReady) return;
 
+      // Listener for Attendance Records
       const attendanceColRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendanceRecords');
-
       onSnapshot(attendanceColRef, (snapshot) => {
         const records = [];
         snapshot.forEach(doc => {
-          records.push({ id: doc.id, ...doc.data() });
+          records.push({ id: doc.id, ...doc.data() }); // Add Firebase document ID
         });
-        records.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        records.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)); // Sort by timestamp
         currentAttendanceRecordsWithIds = records;
-        renderAttendanceTable();
+        if (isAdminLoggedIn) { // Only render if admin is logged in
+          renderAttendanceTable();
+        }
       }, (error) => {
         console.error("Error fetching attendance records from Firestore:", error);
-        locationCard.innerHTML = `
-          <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
-            Gagal memuat history absensi dari server: ${error.message}
-          </div>
-        `;
+        if (isAdminLoggedIn) { // Show error only if admin dashboard is active
+          noAttendanceMsg.textContent = `Gagal memuat history absensi: ${error.message}`;
+          noAttendanceMsg.classList.remove('hidden');
+        }
+      });
+
+      // Listener for Registered Employees
+      const employeesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'registeredEmployees');
+      onSnapshot(employeesColRef, (snapshot) => {
+        const employees = [];
+        snapshot.forEach(doc => {
+          employees.push({ id: doc.id, ...doc.data() }); // The 'id' here is the custom employee ID, not doc.id
+        });
+        employees.sort((a, b) => a.name.localeCompare(b.name)); // Sort by name
+        currentRegisteredEmployees = employees;
+        if (isAdminLoggedIn) { // Only render if admin is logged in
+          renderEmployeesTable();
+        }
+      }, (error) => {
+        console.error("Error fetching employee records from Firestore:", error);
+        if (isAdminLoggedIn) { // Show error only if admin dashboard is active
+          noEmployeesMsg.textContent = `Gagal memuat daftar karyawan: ${error.message}`;
+          noEmployeesMsg.classList.remove('hidden');
+        }
       });
     }
 
@@ -413,6 +615,43 @@
       }
     }
 
+    async function addEmployeeToFirestore(name, id) {
+      if (!isFirebaseReady) {
+        addEmployeeErrorMsg.textContent = 'Server tidak siap. Coba lagi.';
+        addEmployeeErrorMsg.classList.remove('hidden');
+        return false;
+      }
+      try {
+        // Use custom employee ID as document ID for easy lookup
+        const employeeDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'registeredEmployees', id);
+        await setDoc(employeeDocRef, { name: name, id: id });
+        return true;
+      } catch (e) {
+        console.error("Error adding employee to Firestore: ", e);
+        addEmployeeErrorMsg.textContent = `Gagal menambahkan karyawan: ${e.message}`;
+        addEmployeeErrorMsg.classList.remove('hidden');
+        return false;
+      }
+    }
+
+    async function deleteEmployeeFromFirestore(employeeId) {
+      if (!isFirebaseReady) {
+        deleteEmployeeErrorMsg.textContent = 'Server tidak siap. Coba lagi.';
+        deleteEmployeeErrorMsg.classList.remove('hidden');
+        return false;
+      }
+      try {
+        const employeeDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'registeredEmployees', employeeId);
+        await deleteDoc(employeeDocRef);
+        return true;
+      } catch (e) {
+        console.error("Error deleting employee from Firestore: ", e);
+        deleteEmployeeErrorMsg.textContent = `Gagal menghapus karyawan: ${e.message}`;
+        deleteEmployeeErrorMsg.classList.remove('hidden');
+        return false;
+      }
+    }
+
     function renderAttendanceTable() {
       attendanceTableBody.innerHTML = '';
       if (currentAttendanceRecordsWithIds.length === 0) {
@@ -437,6 +676,75 @@
       }
     }
 
+    function renderEmployeesTable() {
+      employeesTableBody.innerHTML = '';
+      if (currentRegisteredEmployees.length === 0) {
+        noEmployeesMsg.classList.remove('hidden');
+      } else {
+        noEmployeesMsg.classList.add('hidden');
+        for (const emp of currentRegisteredEmployees) {
+          const tr = document.createElement('tr');
+          tr.classList.add('hover:bg-gray-50', 'transition');
+          tr.innerHTML = `
+            <td class="py-3 px-4 font-medium">${escapeHtml(emp.name)}</td>
+            <td class="py-3 px-4 font-mono text-xs break-all">${escapeHtml(emp.id)}</td>
+            <td class="py-3 px-4">
+              <button data-employee-id="${escapeHtml(emp.id)}" data-employee-name="${escapeHtml(emp.name)}" class="delete-employee-btn px-3 py-1 bg-red-500 text-white text-sm font-semibold rounded-md hover:bg-red-600 transition">
+                Hapus
+              </button>
+            </td>
+            <td class="py-3 px-4"> <!-- New column for QR Code button -->
+              <button data-employee-id="${escapeHtml(emp.id)}" class="generate-qr-btn px-3 py-1 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 transition">
+                QR
+              </button>
+            </td>
+          `;
+          employeesTableBody.appendChild(tr);
+        }
+
+        // Add event listeners to newly created delete buttons
+        document.querySelectorAll('.delete-employee-btn').forEach(button => {
+          button.addEventListener('click', (e) => {
+            employeeIdToDelete = e.target.dataset.employeeId;
+            const nameToDelete = e.target.dataset.employeeName;
+            employeeToDeleteName.textContent = nameToDelete;
+            deleteEmployeeErrorMsg.classList.add('hidden');
+            deleteEmployeeConfirmModal.classList.remove('hidden');
+          });
+        });
+
+        // Add event listeners to newly created QR buttons
+        document.querySelectorAll('.generate-qr-btn').forEach(button => {
+          button.addEventListener('click', (e) => {
+            const employeeId = e.target.dataset.employeeId;
+            displayQrCode(employeeId);
+          });
+        });
+      }
+    }
+
+    // Function to display QR code in a modal
+    function displayQrCode(employeeId) {
+      qrcodeDiv.innerHTML = ''; // Clear previous QR code
+      qrEmployeeIdDisplay.textContent = employeeId;
+
+      new QRCode(qrcodeDiv, {
+        text: employeeId,
+        width: 180,
+        height: 180,
+        colorDark : "#000000",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.H
+      });
+
+      qrCodeModal.classList.remove('hidden'); // Show modal backdrop
+      // Apply animation classes
+      qrCodeModalContent.classList.remove('opacity-0', 'scale-95');
+      qrCodeModalContent.classList.add('opacity-100', 'scale-100');
+      qrCodeModal.focus(); // Focus the modal for accessibility
+    }
+
+
     // Escape HTML for security (prevent XSS)
     function escapeHtml(text) {
       return text.replace(/[&<>"']/g, function(m) {
@@ -457,16 +765,12 @@
              d1.getDate() === d2.getDate();
     }
 
-    // --- UI Logic and Event Listeners ---
-    employeeNameInput.addEventListener('input', () => {
-      detectBtn.disabled = employeeNameInput.value.trim().length === 0;
-    });
-
+    // Helper function to format date
     function formatDate(date) {
       const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
       return new Intl.DateTimeFormat('id-ID', options).format(date);
     }
-    
+
     // Helper function to format time (e.g., 07:45)
     function formatTime(date) {
         const options = { hour: '2-digit', minute: '2-digit' };
@@ -489,7 +793,144 @@
       return deg * (Math.PI / 180);
     }
 
-    // Login workflow
+    // --- Core Attendance Recording Logic ---
+    async function recordAttendance(employeeName, employeeId) {
+      locationCard.innerHTML = `
+        <div class="flex items-center justify-center space-x-2 mt-2">
+          <svg class="w-5 h-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          <span class="text-blue-600 font-medium">Mendeteksi lokasi...</span>
+        </div>
+      `;
+
+      // Check for duplicate attendance for the current employee on the current day
+      const today = new Date();
+      const existingAttendanceToday = currentAttendanceRecordsWithIds.find(record =>
+        record.id === employeeId && // Crucially check by employee ID
+        record.timestamp && // Ensure timestamp exists
+        isSameDay(new Date(record.timestamp), today)
+      );
+
+      if (existingAttendanceToday) {
+        const recordedTime = formatTime(new Date(existingAttendanceToday.timestamp));
+        locationCard.innerHTML = `
+          <div class="bg-blue-50 border border-blue-200 text-blue-700 rounded-lg p-4 mt-4 select-none">
+            Anda sudah absen hari ini pada pukul ${recordedTime}.
+          </div>
+        `;
+        // Clear manual input only if it was used for this attempt
+        employeeNameInput.value = '';
+        detectBtn.disabled = true;
+        return;
+      }
+
+      if (!navigator.geolocation) {
+        locationCard.innerHTML = `
+          <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
+            Browser Anda tidak mendukung deteksi lokasi.
+          </div>
+        `;
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async function(position) {
+          const { latitude, longitude } = position.coords;
+          try {
+            const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`);
+            const data = await response.json();
+            const address = data.display_name || "Alamat tidak ditemukan";
+            const now = new Date();
+
+            const distance = getDistanceFromLatLonInMeters(latitude, longitude, OFFICE_LAT, OFFICE_LON);
+            const inLocation = distance <= ACCEPT_RADIUS_METERS;
+
+            const keterangan = inLocation ? 'Di lokasi' : 'Di luar lokasi';
+
+            let locationCardContent = '';
+            if (inLocation) {
+              locationCardContent = `
+                <div class="bg-green-50 border border-green-200 rounded-xl p-5 mt-4 flex flex-col items-center select-text">
+                  <svg class="w-8 h-8 text-green-500 mb-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M5 13l4 4L19 7" />
+                  </svg>
+                  <div class="text-green-700 font-semibold mb-1">Absensi berhasil dicatat!</div>
+                  <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
+                  <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
+                  <div class="text-gray-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
+                  <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
+                  <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
+                  <div class="text-green-700 font-semibold mt-3 select-none">${keterangan}</div>
+                </div>
+              `;
+            } else {
+              locationCardContent = `
+                <div class="urgent-alert border rounded-xl p-5 mt-4 flex flex-col items-center select-text">
+                  <svg class="w-10 h-10 mb-3" fill="none" stroke="#b91c1c" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 9v2m0 4h.01M10.29 6.16a8 8 0 1113.42 10.69m-5.67-10.57L3 21" />
+                  </svg>
+                  <div class="text-red-700 text-xl font-extrabold mb-1">PERINGATAN DARURAT</div>
+                  <div class="text-red-700 font-semibold mb-1">Karyawan tidak di lokasi kantor!</div>
+                  <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
+                  <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
+                  <div class="text-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
+                  <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
+                  <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
+                  <div class="text-red-700 font-bold mt-3 select-none">${keterangan}</div>
+                </div>
+              `;
+            }
+            locationCard.innerHTML = locationCardContent;
+
+            const record = {
+              name: employeeName,
+              id: employeeId, // Include employee ID in attendance record
+              datetime: formatDate(now),
+              latitude: latitude.toFixed(6),
+              longitude: longitude.toFixed(6),
+              address: address,
+              keterangan: keterangan,
+            };
+            saveAttendanceRecord(record);
+
+            // Clear manual input only if it was used
+            employeeNameInput.value = '';
+            detectBtn.disabled = true;
+
+          } catch (error) {
+            console.error("Error fetching address or processing location:", error);
+            locationCard.innerHTML = `
+              <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
+                Gagal mendapatkan alamat atau mencatat absensi: ${error.message}
+              </div>
+            `;
+          }
+        },
+        function(error) {
+          let message = "Gagal mendeteksi lokasi.";
+          if (error.code === 1) message = "Izin lokasi ditolak. Silakan izinkan akses lokasi pada browser Anda.";
+          else if (error.code === 2) message = "Lokasi tidak tersedia.";
+          else if (error.code === 3) message = "Permintaan lokasi melebihi waktu tunggu.";
+          locationCard.innerHTML = `
+            <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
+              ${message}
+            </div>
+          `;
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+
+    // --- UI Logic and Event Listeners ---
+
+    // Employee Name Input for Absen section
+    employeeNameInput.addEventListener('input', () => {
+      detectBtn.disabled = employeeNameInput.value.trim().length === 0;
+    });
+
+    // Admin Login/Logout workflow
     adminLoginBtn.addEventListener('click', () => {
       loginErrorMsg.classList.add('hidden');
       adminLoginForm.reset();
@@ -508,7 +949,7 @@
       loginModalContent.addEventListener('transitionend', function handler() {
         adminLoginModal.classList.add('hidden');
         loginModalContent.removeEventListener('transitionend', handler);
-      }, {once: true}); // Use {once: true} to ensure handler only runs once
+      }, {once: true});
     });
     window.addEventListener('keydown', e => {
       if (e.key === 'Escape' && !adminLoginModal.classList.contains('hidden')) {
@@ -524,7 +965,7 @@
       if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
         isAdminLoggedIn = true;
         loginErrorMsg.classList.add('hidden');
-        
+
         // Sembunyikan modal dengan animasi
         loginModalContent.classList.remove('opacity-100', 'scale-100');
         loginModalContent.classList.add('opacity-0', 'scale-95');
@@ -533,11 +974,8 @@
         loginModalContent.addEventListener('transitionend', function handler() {
           adminLoginModal.classList.add('hidden');
           loginModalContent.removeEventListener('transitionend', handler);
-          
-          // Langsung panggil updateUIForAdmin tanpa pesan sementara di locationCard
-          updateUIForAdmin(); 
-
-        }, {once: true}); // Use {once: true} to ensure handler only runs once
+          updateUIForAdmin();
+        }, {once: true});
 
       } else {
         loginErrorMsg.textContent = 'Username atau password salah.';
@@ -545,7 +983,6 @@
       }
     });
 
-    // Logout workflow
     adminLogoutBtn.addEventListener('click', () => {
       isAdminLoggedIn = false;
       updateUIForAdmin();
@@ -553,35 +990,36 @@
 
     function updateUIForAdmin() {
       if (isAdminLoggedIn) {
-        // Sembunyikan semua bagian pengguna biasa
+        // Hide regular user sections
         heroSection.classList.add('hidden');
         fiturSection.classList.add('hidden');
         absenSection.classList.add('hidden');
         adminLoginBtn.classList.add('hidden');
 
-        // Tampilkan dashboard admin dan tombol logout
+        // Show admin dashboard and logout button
         adminDashboard.classList.remove('hidden');
         adminLogoutBtn.classList.remove('hidden');
 
-        // Bersihkan input dan pesan sementara dari bagian pengguna (jika ada)
+        // Clear user section inputs/messages
         locationCard.innerHTML = '';
         employeeNameInput.value = '';
         detectBtn.disabled = true;
 
-        renderAttendanceTable(); // Render tabel dengan data Firestore
+        renderAttendanceTable(); // Re-render table with Firestore data
+        renderEmployeesTable(); // Re-render employees table
       } else {
-        // Sembunyikan dashboard admin dan tombol logout
+        // Hide admin dashboard and logout button
         adminDashboard.classList.add('hidden');
         adminLogoutBtn.classList.add('hidden');
 
-        // Tampilkan semua bagian pengguna biasa
+        // Show regular user sections
         heroSection.classList.remove('hidden');
         fiturSection.classList.remove('hidden');
         absenSection.classList.remove('hidden');
         adminLoginBtn.classList.remove('hidden');
 
-        // Bersihkan input dan pesan sementara dari bagian admin (jika ada)
-        locationCard.innerHTML = '';
+        // Clear admin section inputs/messages
+        locationCard.innerHTML = ''; // This is used by user section too, but cleared here to ensure consistency.
       }
     }
 
@@ -590,24 +1028,8 @@
       document.getElementById('absen').scrollIntoView({ behavior: 'smooth' });
     });
 
+    // Employee Attendance (Detect Location) Logic for manual name input
     detectBtn.addEventListener('click', () => {
-      locationCard.innerHTML = `
-        <div class="flex items-center justify-center space-x-2 mt-2">
-          <svg class="w-5 h-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-          </svg>
-          <span class="text-blue-600 font-medium">Mendeteksi lokasi...</span>
-        </div>
-      `;
-      if (!navigator.geolocation) {
-        locationCard.innerHTML = `
-          <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
-            Browser Anda tidak mendukung deteksi lokasi.
-          </div>
-        `;
-        return;
-      }
       const employeeName = employeeNameInput.value.trim();
       if (employeeName.length === 0) {
         locationCard.innerHTML = `
@@ -617,112 +1039,19 @@
         `;
         return;
       }
-
-      const today = new Date();
-      // Check for duplicate attendance for the current employee on the current day
-      const existingAttendanceToday = currentAttendanceRecordsWithIds.find(record =>
-        record.name.toLowerCase() === employeeName.toLowerCase() &&
-        record.timestamp && // Ensure timestamp exists
-        isSameDay(new Date(record.timestamp), today)
-      );
-
-      if (existingAttendanceToday) {
-        const recordedTime = formatTime(new Date(existingAttendanceToday.timestamp));
-        locationCard.innerHTML = `
-          <div class="bg-blue-50 border border-blue-200 text-blue-700 rounded-lg p-4 mt-4 select-none">
-            Anda sudah absen hari ini pada pukul ${recordedTime}.
-          </div>
-        `;
-        employeeNameInput.value = ''; // Clear the input field
-        detectBtn.disabled = true; // Disable the button
-        return; // Stop further execution
-      }
-
-
-      navigator.geolocation.getCurrentPosition(
-        function(position) {
-          const { latitude, longitude } = position.coords;
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`)
-            .then(response => response.json())
-            .then(data => {
-              const address = data.display_name || "Alamat tidak ditemukan";
-              const now = new Date();
-
-              const distance = getDistanceFromLatLonInMeters(latitude, longitude, OFFICE_LAT, OFFICE_LON);
-              const inLocation = distance <= ACCEPT_RADIUS_METERS;
-
-              const keterangan = inLocation ? 'Di lokasi' : 'Di luar lokasi';
-
-              let locationCardContent = '';
-              if (inLocation) {
-                locationCardContent = `
-                  <div class="bg-green-50 border border-green-200 rounded-xl p-5 mt-4 flex flex-col items-center select-text">
-                    <svg class="w-8 h-8 text-green-500 mb-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <path d="M5 13l4 4L19 7" />
-                    </svg>
-                    <div class="text-green-700 font-semibold mb-1">Absensi berhasil dicatat!</div>
-                    <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
-                    <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
-                    <div class="text-gray-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
-                    <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
-                    <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
-                    <div class="text-green-700 font-semibold mt-3 select-none">${keterangan}</div>
-                  </div>
-                `;
-              } else {
-                locationCardContent = `
-                  <div class="urgent-alert border rounded-xl p-5 mt-4 flex flex-col items-center select-text">
-                    <svg class="w-10 h-10 mb-3" fill="none" stroke="#b91c1c" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <path d="M12 9v2m0 4h.01M10.29 6.16a8 8 0 1113.42 10.69m-5.67-10.57L3 21" />
-                    </svg>
-                    <div class="text-red-700 text-xl font-extrabold mb-1">PERINGATAN DARURAT</div>
-                    <div class="text-red-700 font-semibold mb-1">Karyawan tidak di lokasi kantor!</div>
-                    <div class="text-gray-700 text-sm">Nama: <span class="font-semibold">${escapeHtml(employeeName)}</span></div>
-                    <div class="text-gray-700 text-sm">Waktu: <span class="font-mono">${formatDate(now)}</span></div>
-                    <div class="text-700 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span></div>
-                    <div class="text-gray-700 text-sm">Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
-                    <div class="text-gray-700 text-sm mt-2">Alamat: <span class="font-mono">${escapeHtml(address)}</span></div>
-                    <div class="text-red-700 font-bold mt-3 select-none">${keterangan}</div>
-                  </div>
-                `;
-              }
-              locationCard.innerHTML = locationCardContent;
-
-              const record = {
-                name: employeeName,
-                datetime: formatDate(now),
-                latitude: latitude.toFixed(6),
-                longitude: longitude.toFixed(6),
-                address: address,
-                keterangan: keterangan,
-              };
-              saveAttendanceRecord(record); // Save to Firestore
-
-              employeeNameInput.value = '';
-              detectBtn.disabled = true;
-            })
-            .catch(() => {
-              locationCard.innerHTML = `
-                <div class="bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg p-4 mt-4 select-none">
-                  Lokasi terdeteksi, namun gagal mengambil nama alamat.
-                  <div class="mt-2 text-sm">Latitude: <span class="font-mono">${latitude.toFixed(6)}</span>, Longitude: <span class="font-mono">${longitude.toFixed(6)}</span></div>
-                </div>
-              `;
-            });
-        },
-        function(error) {
-          let message = "Gagal mendeteksi lokasi.";
-          if (error.code === 1) message = "Izin lokasi ditolak. Silakan izinkan akses lokasi pada browser Anda.";
-          else if (error.code === 2) message = "Lokasi tidak tersedia.";
-          else if (error.code === 3) message = "Permintaan lokasi melebihi waktu tunggu.";
+      // Find employee ID by name
+      const registeredEmployee = currentRegisteredEmployees.find(emp => emp.name.toLowerCase() === employeeName.toLowerCase());
+      if (!registeredEmployee) {
           locationCard.innerHTML = `
-            <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
-              ${message}
-            </div>
+              <div class="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 mt-4 select-none">
+                  Nama karyawan "${escapeHtml(employeeName)}" tidak terdaftar. Harap hubungi admin.
+              </div>
           `;
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
+          employeeNameInput.value = '';
+          detectBtn.disabled = true;
+          return;
+      }
+      recordAttendance(registeredEmployee.name, registeredEmployee.id);
     });
 
     // Reset History functionality
@@ -750,7 +1079,7 @@
           const q = query(attendanceColRef);
           const querySnapshot = await getDocs(q);
 
-          const batch = writeBatch(db); // Use batch for efficient deletion
+          const batch = writeBatch(db);
           querySnapshot.forEach((doc) => {
             batch.delete(doc.ref);
           });
@@ -775,9 +1104,320 @@
       }
     });
 
+    // New: Add Employee Functionality
+    addEmployeeBtn.addEventListener('click', () => {
+        newEmployeeName.value = '';
+        newEmployeeIdDisplay.value = crypto.randomUUID(); // Generate random ID
+        addEmployeeErrorMsg.classList.add('hidden');
+        addEmployeeModal.classList.remove('hidden');
+        addEmployeeModalContent.classList.remove('opacity-0', 'scale-95');
+        addEmployeeModalContent.classList.add('opacity-100', 'scale-100');
+        newEmployeeName.focus();
+    });
+
+    cancelAddEmployeeBtn.addEventListener('click', () => {
+        addEmployeeModalContent.classList.remove('opacity-100', 'scale-100');
+        addEmployeeModalContent.classList.add('opacity-0', 'scale-95');
+        addEmployeeModalContent.addEventListener('transitionend', function handler() {
+            addEmployeeModal.classList.add('hidden');
+            addEmployeeModalContent.removeEventListener('transitionend', handler);
+        }, {once: true});
+    });
+
+    addEmployeeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = newEmployeeName.value.trim();
+        const id = newEmployeeIdDisplay.value;
+
+        if (name.length === 0) {
+            addEmployeeErrorMsg.textContent = 'Nama karyawan tidak boleh kosong.';
+            addEmployeeErrorMsg.classList.remove('hidden');
+            return;
+        }
+
+        // Check if employee name already exists (case-insensitive)
+        const nameExists = currentRegisteredEmployees.some(emp => emp.name.toLowerCase() === name.toLowerCase());
+        if (nameExists) {
+            addEmployeeErrorMsg.textContent = 'Nama karyawan ini sudah terdaftar.';
+            addEmployeeErrorMsg.classList.remove('hidden');
+            return;
+        }
+
+        addEmployeeConfirmBtn.disabled = true; // Disable button during submission
+        addEmployeeErrorMsg.classList.add('hidden');
+
+        const success = await addEmployeeToFirestore(name, id);
+        if (success) {
+            addEmployeeModalContent.classList.remove('opacity-100', 'scale-100');
+            addEmployeeModalContent.classList.add('opacity-0', 'scale-95');
+            addEmployeeModalContent.addEventListener('transitionend', function handler() {
+                addEmployeeModal.classList.add('hidden');
+                addEmployeeModalContent.removeEventListener('transitionend', handler);
+                // Optionally show a temporary success message in the main dashboard
+                locationCard.innerHTML = `
+                    <div class="bg-green-50 border border-green-200 text-green-700 rounded-lg p-4 mt-4 select-none">
+                        Karyawan "${escapeHtml(name)}" berhasil ditambahkan!
+                    </div>
+                `;
+                setTimeout(() => locationCard.innerHTML = '', 3000); // Clear message after 3 seconds
+            }, {once: true});
+        }
+        addEmployeeConfirmBtn.disabled = false; // Re-enable button
+    });
+
+    // New: Delete Employee Functionality
+    cancelDeleteEmployeeBtn.addEventListener('click', () => {
+        deleteEmployeeConfirmModal.classList.add('hidden');
+        employeeIdToDelete = null;
+    });
+
+    confirmDeleteEmployeeBtn.addEventListener('click', async () => {
+        if (!employeeIdToDelete) return;
+
+        confirmDeleteEmployeeBtn.disabled = true; // Disable button during deletion
+        deleteEmployeeErrorMsg.classList.add('hidden');
+
+        const success = await deleteEmployeeFromFirestore(employeeIdToDelete);
+        if (success) {
+            deleteEmployeeConfirmModal.classList.add('hidden');
+            // Optionally show success message
+            locationCard.innerHTML = `
+                <div class="bg-green-50 border border-green-200 text-green-700 rounded-lg p-4 mt-4 select-none">
+                    Karyawan berhasil dihapus!
+                </div>
+            `;
+            setTimeout(() => locationCard.innerHTML = '', 3000);
+        }
+        confirmDeleteEmployeeBtn.disabled = false;
+        employeeIdToDelete = null; // Clear the stored ID
+    });
+
+    // Close QR modal (for admin to display QR)
+    closeQrModalBtn.addEventListener('click', () => {
+      qrCodeModalContent.classList.remove('opacity-100', 'scale-100');
+      qrCodeModalContent.classList.add('opacity-0', 'scale-95');
+      qrCodeModalContent.addEventListener('transitionend', function handler() {
+        qrCodeModal.classList.add('hidden');
+        qrCodeModalContent.removeEventListener('transitionend', handler);
+      }, {once: true});
+    });
+
+    // --- QR Scanner Functionality for Attendance ---
+
+    // Event listener for the "Scan QR" button on the front page
+    scanQrBtn.addEventListener('click', () => {
+      qrScanMessage.textContent = 'Pilih metode pemindaian QR Code.';
+      qrScanError.classList.add('hidden');
+      qrVideo.classList.add('hidden'); // Hide video initially
+      qrScannerModal.classList.remove('hidden'); // Show modal backdrop
+      // Apply animation classes
+      qrScannerModalContent.classList.remove('opacity-0', 'scale-95');
+      qrScannerModalContent.classList.add('opacity-100', 'scale-100');
+      qrScannerModal.focus(); // Focus the modal for accessibility
+    });
+
+    // Event listener for "Pilih dari Galeri" button
+    selectImageBtn.addEventListener('click', () => {
+        qrImageInput.click(); // Trigger the hidden file input
+    });
+
+    // Event listener for when an image is selected from the gallery
+    qrImageInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            stopQrScanner(); // Stop camera if it's running
+            qrVideo.classList.add('hidden'); // Ensure video is hidden
+            qrScanMessage.textContent = 'Memindai gambar...';
+            qrScanError.classList.add('hidden');
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    const ctx = qrCanvas.getContext('2d');
+                    // Set canvas dimensions to fit the image while maintaining aspect ratio
+                    const aspectRatio = img.width / img.height;
+                    const maxWidth = 300; // Max width for canvas rendering
+                    const maxHeight = 300; // Max height for canvas rendering
+
+                    let drawWidth = img.width;
+                    let drawHeight = img.height;
+
+                    if (drawWidth > maxWidth) {
+                        drawWidth = maxWidth;
+                        drawHeight = drawWidth / aspectRatio;
+                    }
+                    if (drawHeight > maxHeight) {
+                        drawHeight = maxHeight;
+                        drawWidth = drawHeight * aspectRatio;
+                    }
+
+                    qrCanvas.width = drawWidth;
+                    qrCanvas.height = drawHeight;
+
+                    ctx.drawImage(img, 0, 0, drawWidth, drawHeight);
+                    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                    if (code) {
+                        processScannedQr(code.data);
+                    } else {
+                        qrScanError.textContent = 'Tidak dapat menemukan QR Code pada gambar yang dipilih.';
+                        qrScanError.classList.remove('hidden');
+                        qrScanMessage.textContent = 'Pilih gambar lain atau gunakan kamera.';
+                    }
+                };
+                img.onerror = () => {
+                    qrScanError.textContent = 'Gagal memuat gambar.';
+                    qrScanError.classList.remove('hidden');
+                    qrScanMessage.textContent = 'Pilih gambar lain atau gunakan kamera.';
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        qrImageInput.value = ''; // Clear the file input
+    });
+
+    // Event listener for "Gunakan Kamera" button
+    startCameraScanBtn.addEventListener('click', () => {
+        startCameraScanner();
+    });
+
+
+    // Event listener for closing the QR scanner modal
+    closeQrScannerModalBtn.addEventListener('click', () => {
+      stopQrScanner(); // Stop the camera stream
+      qrScannerModalContent.classList.remove('opacity-100', 'scale-100');
+      qrScannerModalContent.classList.add('opacity-0', 'scale-95');
+      qrScannerModalContent.addEventListener('transitionend', function handler() {
+        qrScannerModal.classList.add('hidden');
+        qrScannerModalContent.removeEventListener('transitionend', handler);
+        qrVideo.classList.remove('hidden'); // Ensure video is visible if we start camera again later
+      }, {once: true});
+    });
+
+    // Function to start the QR scanner from camera
+    async function startCameraScanner() {
+      if (videoStream) stopQrScanner(); // Ensure any previous stream is stopped
+
+      try {
+        qrScanMessage.textContent = 'Memulai kamera...';
+        qrScanError.classList.add('hidden');
+        qrVideo.classList.remove('hidden'); // Show video element
+
+        // Request camera access, preferring the environment-facing camera
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        qrVideo.srcObject = stream;
+        videoStream = stream; // Store stream to stop it later
+
+        // Once video metadata is loaded, play the video and start scanning
+        qrVideo.onloadedmetadata = () => {
+          qrVideo.play();
+          // Set canvas dimensions to match video stream
+          qrCanvas.width = qrVideo.videoWidth;
+          qrCanvas.height = qrVideo.videoHeight;
+          scanQrCode(); // Start the scanning loop
+          qrScanMessage.textContent = 'Arahkan kamera ke Kode QR.'; // Reset message
+        };
+      } catch (err) {
+        console.error("Error accessing camera: ", err);
+        let msg = 'Gagal mengakses kamera.';
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          msg = 'Izin kamera ditolak. Harap izinkan akses kamera di pengaturan browser Anda.';
+        } else if (err.name === 'NotFoundError') {
+          msg = 'Tidak ada kamera yang ditemukan.';
+        } else if (err.name === 'NotReadableError') {
+          msg = 'Kamera sedang digunakan oleh aplikasi lain.';
+        }
+        qrScanError.textContent = msg;
+        qrScanError.classList.remove('hidden');
+        qrScanMessage.textContent = ''; // Clear scanning message
+        qrVideo.classList.add('hidden'); // Hide video if camera access fails
+      }
+    }
+
+    // Function to continuously scan for QR codes (from camera)
+    function scanQrCode() {
+      if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
+        const ctx = qrCanvas.getContext('2d', { willReadFrequently: true });
+        // Set canvas dimensions to match video stream if not already set (for mobile rotation etc.)
+        if (qrCanvas.width !== qrVideo.videoWidth || qrCanvas.height !== qrVideo.videoHeight) {
+            qrCanvas.width = qrVideo.videoWidth;
+            qrCanvas.height = qrVideo.videoHeight;
+        }
+
+        // Draw the video frame onto the canvas
+        ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
+        // Get image data from the canvas
+        const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+        // Use jsQR to find QR codes
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: "dontInvert", // Optimize for various QR codes
+        });
+
+        if (code) {
+          // QR code found! Stop the scanner and process the data
+          stopQrScanner();
+          processScannedQr(code.data);
+          return; // Exit the function to prevent further scanning in this loop
+        }
+      }
+      // Continue scanning in the next animation frame
+      animationFrameId = requestAnimationFrame(scanQrCode);
+    }
+
+    // Function to stop the QR scanner camera stream and animation loop
+    function stopQrScanner() {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      if (videoStream) {
+        // Stop all tracks (video, audio) in the stream
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+        qrVideo.srcObject = null; // Disconnect the stream from the video element
+      }
+    }
+
+    // Function to process the scanned QR code data
+    function processScannedQr(scannedId) {
+      // Find the employee in the registered employees list using the scanned ID
+      const registeredEmployee = currentRegisteredEmployees.find(emp => emp.id === scannedId);
+
+      if (registeredEmployee) {
+        // Valid employee found! Record attendance
+        recordAttendance(registeredEmployee.name, registeredEmployee.id);
+        closeQrScannerModalBtn.click(); // Close the scanner modal after successful scan
+      } else {
+        // Scanned ID does not match any registered employee
+        qrScanError.textContent = `Kode QR tidak valid atau karyawan tidak terdaftar: ${escapeHtml(scannedId)}`;
+        qrScanError.classList.remove('hidden');
+        qrScanMessage.textContent = 'Pilih gambar lain atau gunakan kamera.'; // Update message for next attempt
+        // Re-enable camera or prompt for gallery if it was a camera scan
+        if (videoStream) { // If it was a live camera scan
+            startCameraScanner(); // Restart camera to allow rescanning
+        }
+      }
+    }
+
+
     window.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && !resetConfirmModal.classList.contains('hidden')) {
-        document.getElementById('closeLoginModalBtn').click();
+      if (e.key === 'Escape') {
+        if (!adminLoginModal.classList.contains('hidden')) {
+            document.getElementById('closeLoginModalBtn').click();
+        } else if (!resetConfirmModal.classList.contains('hidden')) {
+            cancelResetBtn.click();
+        } else if (!addEmployeeModal.classList.contains('hidden')) {
+            cancelAddEmployeeBtn.click();
+        } else if (!deleteEmployeeConfirmModal.classList.contains('hidden')) {
+            cancelDeleteEmployeeBtn.click();
+        } else if (!qrCodeModal.classList.contains('hidden')) {
+            closeQrModalBtn.click();
+        } else if (!qrScannerModal.classList.contains('hidden')) { // Handle QR scanner modal
+            closeQrScannerModalBtn.click();
+        }
       }
     });
 
