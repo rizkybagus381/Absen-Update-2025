@@ -48,20 +48,18 @@
     }
 
     /* Table specific styling for better appearance */
-    #attendanceList table,
+    /* Removed global table styles for attendanceList to apply them per employee table */
     #registeredEmployeesList table {
       min-width: 768px; /* Ensure table has a minimum width to enable horizontal scroll on small screens */
     }
 
-    #attendanceList th,
-    #attendanceList td,
+    /* Styles for registered employees table */
     #registeredEmployeesList th,
     #registeredEmployeesList td {
       padding: 12px 16px; /* Increased padding for better spacing */
       border-bottom: 1px solid #e5e7eb; /* Subtle bottom border for rows */
     }
 
-    #attendanceList thead th,
     #registeredEmployeesList thead th {
       background-color: #f9fafb; /* Light background for header */
       text-transform: uppercase;
@@ -74,19 +72,16 @@
     }
 
     /* Last child of header row should have no bottom border to avoid double border */
-    #attendanceList thead tr:last-child th,
     #registeredEmployeesList thead tr:last-child th {
       border-bottom: none;
     }
 
     /* Remove bottom border for the last row of tbody */
-    #attendanceTableBody tr:last-child td,
     #employeesTableBody tr:last-child td {
       border-bottom: none;
     }
 
     /* Add striped rows for better readability */
-    #attendanceTableBody tr:nth-child(even),
     #employeesTableBody tr:nth-child(even) {
         background-color: #f9fafb; /* Lighter background for even rows */
     }
@@ -137,6 +132,25 @@
     }
     #qrCanvas {
       display: none; /* Canvas remains hidden */
+    }
+
+    /* Specific styles for individual employee attendance tables */
+    .employee-attendance-card table th,
+    .employee-attendance-card table td {
+      padding: 12px 16px; /* Increased padding for better spacing */
+      border-bottom: 1px solid #e5e7eb; /* Subtle bottom border for rows */
+    }
+
+    .employee-attendance-card table thead th {
+      background-color: #f9fafb; /* Light background for header */
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.875rem; /* Smaller font for headers */
+      color: #4b5563; /* Darker gray for header text */
+    }
+
+    .employee-attendance-card table tbody tr:nth-child(even) {
+      background-color: #f9fafb; /* Lighter background for even rows */
     }
   </style>
 </head>
@@ -281,24 +295,12 @@
         </div>
     </div>
 
-    <!-- Employee Attendance List (Existing) -->
-    <div id="attendanceList" class="overflow-x-auto bg-white rounded-2xl shadow p-4 sm:p-6 max-h-[480px] scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400">
+    <!-- Employee Attendance List (Now uses individual employee tables) -->
+    <div id="attendanceSection" class="bg-white rounded-2xl shadow p-4 sm:p-6">
         <h3 class="text-2xl font-bold mb-4 text-gray-800">Riwayat Absensi Karyawan</h3>
-        <table class="w-full text-left border-collapse">
-            <thead>
-                <tr class="border-b border-gray-300 text-gray-700 select-none">
-                    <th class="py-3 px-4">Nama Karyawan</th>
-                    <th class="py-3 px-4">Tanggal &amp; Waktu</th>
-                    <th class="py-3 px-4">Latitude</th>
-                    <th class="py-3 px-4">Longitude</th>
-                    <th class="py-3 px-4">Alamat</th>
-                    <th class="py-3 px-4">Keterangan</th>
-                </tr>
-            </thead>
-            <tbody id="attendanceTableBody" class="divide-y divide-gray-200">
-                <!-- Attendance rows inserted here dynamically -->
-            </tbody>
-        </table>
+        <div id="attendanceListContainer" class="space-y-6">
+            <!-- Employee-specific attendance tables will be dynamically inserted here by JS -->
+        </div>
         <p id="noAttendanceMsg" class="text-center text-gray-500 mt-6 select-none hidden">Belum ada data aktivitas karyawan.</p>
     </div>
     <div class="flex justify-center mt-6">
@@ -442,7 +444,8 @@
     const fiturSection = document.getElementById('fitur');
     const absenSection = document.getElementById('absen');
     const adminDashboard = document.getElementById('adminDashboard');
-    const attendanceTableBody = document.getElementById('attendanceTableBody');
+    // Removed attendanceTableBody as it's now dynamically created per employee
+    const attendanceListContainer = document.getElementById('attendanceListContainer'); // New container for employee-specific tables
     const noAttendanceMsg = document.getElementById('noAttendanceMsg');
 
     const employeeNameInput = document.getElementById('employeeName'); // Manual employee name input
@@ -652,29 +655,90 @@
       }
     }
 
+    // This function is now responsible for rendering individual employee attendance tables
     function renderAttendanceTable() {
-      attendanceTableBody.innerHTML = '';
+      // Get the container where individual employee attendance blocks will be added
+      const attendanceListContainer = document.getElementById('attendanceListContainer');
+      attendanceListContainer.innerHTML = ''; // Clear existing content before re-rendering
+
+      // Check if there are any attendance records at all
       if (currentAttendanceRecordsWithIds.length === 0) {
-        noAttendanceMsg.classList.remove('hidden');
+        noAttendanceMsg.classList.remove('hidden'); // Show the "no data" message
+        return; // Exit if no records
       } else {
-        noAttendanceMsg.classList.add('hidden');
-        for (const r of currentAttendanceRecordsWithIds) {
+        noAttendanceMsg.classList.add('hidden'); // Hide the "no data" message
+      }
+
+      // Group attendance records by employee ID
+      // The `record.id` in `currentAttendanceRecordsWithIds` array refers to the `employeeId`
+      const groupedAttendance = new Map(); // Map: employeeId -> Array of attendance records
+      for (const record of currentAttendanceRecordsWithIds) {
+        if (!groupedAttendance.has(record.id)) {
+          groupedAttendance.set(record.id, []);
+        }
+        groupedAttendance.get(record.id).push(record);
+      }
+
+      // Iterate through each grouped employee's records and create a separate table/card
+      for (const [employeeId, records] of groupedAttendance.entries()) {
+        // Find the employee's current registered name; fallback to name in record if not found
+        const employee = currentRegisteredEmployees.find(emp => emp.id === employeeId);
+        const employeeName = employee ? employee.name : (records[0] ? records[0].name : 'Karyawan Tidak Dikenal');
+        const attendanceCount = records.length;
+
+        const employeeCardDiv = document.createElement('div');
+        // Apply styling for each employee's attendance box (card-like appearance)
+        employeeCardDiv.classList.add('employee-attendance-card', 'bg-gray-50', 'rounded-xl', 'shadow-md', 'p-4', 'sm:p-6', 'border', 'border-gray-200');
+
+        employeeCardDiv.innerHTML = `
+          <h4 class="text-xl font-bold text-gray-800 mb-4 flex items-center justify-between">
+            <span>${escapeHtml(employeeName)}</span>
+            <span class="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full">${attendanceCount} Kehadiran</span>
+          </h4>
+          <div class="overflow-x-auto max-h-[300px] scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400">
+            <table class="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr class="border-b border-gray-300 text-gray-700 select-none bg-gray-100">
+                  <th class="py-3 px-4">Tanggal &amp; Waktu</th>
+                  <th class="py-3 px-4">Latitude</th>
+                  <th class="py-3 px-4">Longitude</th>
+                  <th class="py-3 px-4">Alamat</th>
+                  <th class="py-3 px-4">Keterangan</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200" id="attendanceTableBody-${escapeHtml(employeeId)}">
+                <!-- Attendance rows for this employee will be appended here -->
+              </tbody>
+            </table>
+          </div>
+          ${attendanceCount === 0 ? `<p class="text-center text-gray-500 mt-4">Belum ada absensi untuk karyawan ini.</p>` : ''}
+        `;
+        attendanceListContainer.appendChild(employeeCardDiv);
+
+        // Get the tbody for the current employee's table
+        const currentEmployeeTableBody = document.getElementById(`attendanceTableBody-${escapeHtml(employeeId)}`);
+
+        // Sort records for the current employee by timestamp in descending order (newest first)
+        records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        // Populate the table body with attendance records for this employee
+        for (const r of records) {
           const tr = document.createElement('tr');
           tr.classList.add('hover:bg-gray-50', 'transition');
           tr.innerHTML = `
-            <td class="py-3 px-4 font-medium">${escapeHtml(r.name)}</td>
-            <td class="py-3 px-4">${escapeHtml(r.datetime)}</td>
-            <td class="py-3 px-4 font-mono">${escapeHtml(r.latitude)}</td>
-            <td class="py-3 px-4 font-mono">${escapeHtml(r.longitude)}</td>
-            <td class="py-3 px-4">${escapeHtml(r.address)}</td>
-            <td class="py-3 px-4 font-semibold ${r.keterangan === 'Di luar lokasi' ? 'text-red-700' : 'text-green-700'} select-none">
+            <td class="py-3 px-4 text-sm">${escapeHtml(r.datetime)}</td>
+            <td class="py-3 px-4 text-sm font-mono">${escapeHtml(r.latitude)}</td>
+            <td class="py-3 px-4 text-sm font-mono">${escapeHtml(r.longitude)}</td>
+            <td class="py-3 px-4 text-sm">${escapeHtml(r.address)}</td>
+            <td class="py-3 px-4 text-sm font-semibold ${r.keterangan === 'Di luar lokasi' ? 'text-red-700 urgent-alert' : 'text-green-700'} select-none">
               ${escapeHtml(r.keterangan)}
             </td>
           `;
-          attendanceTableBody.appendChild(tr);
+          currentEmployeeTableBody.appendChild(tr);
         }
       }
     }
+
 
     function renderEmployeesTable() {
       employeesTableBody.innerHTML = '';
